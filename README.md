@@ -17,3 +17,12 @@ In a serious attempt to explain what we tried in the end, we did:
 - We changed jk and graph pooling types, the first one to max and the second one to attention
 - We changed the optimizer to AdamW to implement weight decay
 I also add the logs that are already in the folder:
+# Training A
+![training_progress A](https://github.com/user-attachments/assets/3581e5a7-dc4d-40c7-9bfd-81726aeba265)
+# Training B
+![training_progress B](https://github.com/user-attachments/assets/cfd22693-3a0c-48c5-99bb-5c6b0fdf2316)
+# Training C
+![training_progress C](https://github.com/user-attachments/assets/c6743f57-c6c4-4c13-91d7-c1819eefd65c)
+# Training D
+![training_progress D](https://github.com/user-attachments/assets/bf422d03-8aa2-45c8-99c1-e70a82f32f02)
+
