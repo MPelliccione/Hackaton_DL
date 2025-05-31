@@ -16,3 +16,4 @@ In a serious attempt to explain what we tried in the end, we did:
 - We put some early stopping to prevent overfitting
 - We changed jk and graph pooling types, the first one to max and the second one to attention
 - We changed the optimizer to AdamW to implement weight decay
+I also add the logs that are already in the folder:
