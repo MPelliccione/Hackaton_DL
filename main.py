@@ -7,10 +7,12 @@ from src.utils import set_seed
 import pandas as pd
 import matplotlib.pyplot as plt
 import logging
-from tqdm import tqdm
+from tqdm import tqdm 
+from sklearn.metrics import f1_score
 
+from src.loss import GCODLoss
 from src.models import GNN 
-
+from src.utils import RandomEdgeDrop, GaussianEdgeNoise
 # Set the random seed
 set_seed()
 
@@ -135,20 +137,10 @@ def main(args):
 
     if args.gnn == 'gin':
         model = GNN(gnn_type = 'gin', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = False).to(device)
-    elif args.gnn == 'gin-virtual':
-        model = GNN(gnn_type = 'gin', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = True).to(device)
-    elif args.gnn == 'gcn':
-        model = GNN(gnn_type = 'gcn', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = False).to(device)
-    elif args.gnn == 'gcn-virtual':
-        model = GNN(gnn_type = 'gcn', num_class = 6, num_layer = args.num_layer, emb_dim = args.emb_dim, drop_ratio = args.drop_ratio, virtual_node = True).to(device)
-    elif args.gnn == 'graphsage':
-        model = GNN(gnn_type='graphsage', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=False).to(device) # Decidi se testare anche con virtual_node=True
-    elif args.gnn == 'gat':
-        model = GNN(gnn_type='gat', num_class=6, num_layer=args.num_layer, emb_dim=args.emb_dim, drop_ratio=args.drop_ratio, virtual_node=False).to(device) # Decidi se testare anche con virtual_node=True
-    else:
+    else:    
         raise ValueError('Invalid GNN type')
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.002,weight_decay=1.27e-5)
+   
 
     num_classes = 6  # Replace with the actual number of classes in your dataset
     criterion = GCODLoss(num_classes=num_classes) # You can use noise_prob for q, or add a new argument
@@ -188,9 +180,14 @@ def main(args):
         generator = torch.Generator().manual_seed(12)
         train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
 
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        edge_drop_transform = RandomEdgeDrop(p=0.2)
+        gaussian_noise_transform = GaussianEdgeNoise(std=0.08, p=0.8)
+
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda batch: Batch.from_data_list([train_transform(d) for d in batch]))
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
+
+    
         num_epochs = args.epochs
         best_val_accuracy = 0.0
 
@@ -199,11 +196,23 @@ def main(args):
         val_losses = [] # Aggiungi questa lista per salvare le validation losses
         val_accuracies = []
 
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.002,weight_decay=1.27e-5)
+        scheduler = ReduceLROnPlateau(
+            optimizer, 
+            mode='max', 
+            factor=0.5, 
+            patience=5,
+            min_lr=1e-6
+        )
+            
         if num_checkpoints > 1:
             checkpoint_intervals = [int((i + 1) * num_epochs / num_checkpoints) for i in range(num_checkpoints)]
         else:
             checkpoint_intervals = [num_epochs]
-
+        best_val_accuracy = 0.0
+        epochs_no_improve = 0
+        early_stopping_patience = 15
+        
         for epoch in range(num_epochs):
             train_loss, train_acc = train(
                 train_loader, model, optimizer, criterion, device,
@@ -223,12 +232,24 @@ def main(args):
             train_accuracies.append(train_acc)
             val_losses.append(val_loss) # Aggiungi la validation loss alla lista
             val_accuracies.append(val_acc)
+            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Val F1: {val_f1:.4f}")
 
-
+                # Early stopping logic
             if val_acc > best_val_accuracy:
                 best_val_accuracy = val_acc
+                epochs_no_improve = 0  # Reset counter
+                # Opzionalmente salva il modello qui se vuoi salvare il modello migliore finora
                 torch.save(model.state_dict(), checkpoint_path)
-                print(f"Best model updated and saved at {checkpoint_path}")
+                print(f"Best model updated and saved at {checkpoint_path}") # Spostato all'esterno del ciclo se vuoi salvare solo alla fine
+
+            else:
+                epochs_no_improve += 1
+
+
+
+            if epochs_no_improve == early_stopping_patience:
+                print(f"Early stopping triggered after {early_stopping_patience} epochs without improvement.")
+                break # Exit the training loop
 
         plot_training_progress(train_losses, train_accuracies, os.path.join(logs_folder, "plots"))
 
@@ -241,14 +262,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train and evaluate GNN models on graph datasets.")
     parser.add_argument("--train_path", type=str, help="Path to the training dataset (optional).")
     parser.add_argument("--test_path", type=str, required=True, help="Path to the test dataset.")
-    parser.add_argument("--num_checkpoints", type=int, help="Number of checkpoints to save during training.")
+    parser.add_argument("--num_checkpoints", type=int, default=20, help="Number of checkpoints to save during training.")
     parser.add_argument('--device', type=int, default=1, help='which gpu to use if any (default: 0)')
     parser.add_argument('--gnn', type=str, default='gin', help='GNN gin, gin-virtual, or gcn, or gcn-virtual, gat, graphsage (default: gin-virtual)')
     parser.add_argument('--drop_ratio', type=float, default=0.5, help='dropout ratio (default: 0.5)')
-    parser.add_argument('--num_layer', type=int, default=5, help='number of GNN message passing layers (default: 5)')
-    parser.add_argument('--emb_dim', type=int, default=300, help='dimensionality of hidden units in GNNs (default: 300)')
+    parser.add_argument('--num_layer', type=int, default=4, help='number of GNN message passing layers (default: 5)')
+    parser.add_argument('--emb_dim', type=int, default=480, help='dimensionality of hidden units in GNNs (default: 300)')
     parser.add_argument('--batch_size', type=int, default=32, help='input batch size for training (default: 32)')
-    parser.add_argument('--epochs', type=int, default=10, help='number of epochs to train (default: 10)')
+    parser.add_argument('--epochs', type=int, default=100, help='number of epochs to train (default: 10)')
     
     args = parser.parse_args()
     main(args)

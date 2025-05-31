@@ -1,7 +1,7 @@
 import torch
 from torch_geometric.nn import MessagePassing
 import torch.nn.functional as F
-from torch_geometric.nn import global_mean_pool, global_add_pool
+from torch_geometric.nn import global_mean_pool, global_add_pool, GraphNorm
 from torch_geometric.utils import degree
 
 import math
@@ -15,7 +15,7 @@ class GINConv(MessagePassing):
 
         super(GINConv, self).__init__(aggr = "add")
 
-        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
+        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), GraphNorm(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
 
         self.edge_encoder = torch.nn.Linear(7, emb_dim)
@@ -157,7 +157,6 @@ class GraphSAGEConv(MessagePassing):
         return aggr_out
     
     
-### GNN to generate node embedding
 class GNN_node(torch.nn.Module):
     """
     Output:
@@ -191,10 +190,14 @@ class GNN_node(torch.nn.Module):
                 self.convs.append(GINConv(emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
+            elif gnn_type == 'graphsage':
+                self.convs.append(GraphSAGEConv(emb_dim))
+            elif gnn_type == 'gat':
+                self.convs.append(GATConv(emb_dim))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+            self.batch_norms.append(GraphNorm(emb_dim))
 
     def forward(self, batched_data):
         x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
@@ -226,17 +229,19 @@ class GNN_node(torch.nn.Module):
             node_representation = 0
             for layer in range(self.num_layer + 1):
                 node_representation += h_list[layer]
+        elif self.JK == "max":
+            node_representation = torch.stack(h_list, dim=0)
+            node_representation = torch.max(node_representation, dim=0)[0]
 
         return node_representation
 
 
-### Virtual GNN to generate node embedding
 class GNN_node_Virtualnode(torch.nn.Module):
     """
     Output:
         node representations
     """
-    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin'):
+    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "max", residual = False, gnn_type = 'gin'):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -270,14 +275,19 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 self.convs.append(GINConv(emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
+            elif gnn_type == 'graphsage':
+                self.convs.append(GraphSAGEConv(emb_dim))
+            elif gnn_type == 'gat':
+                self.convs.append(GATConv(emb_dim))
             else:
                 raise ValueError('Undefined GNN type called {}'.format(gnn_type))
 
-            self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+            # Fix: Use correct dimension for normalization
+            self.batch_norms.append(GraphNorm(emb_dim))
 
         for layer in range(num_layer - 1):
-            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), \
-                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
+            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), GraphNorm(2*emb_dim), torch.nn.ReLU(), \
+                                                    torch.nn.Linear(2*emb_dim, emb_dim), GraphNorm(emb_dim), torch.nn.ReLU()))
 
 
     def forward(self, batched_data):
@@ -325,5 +335,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
             node_representation = 0
             for layer in range(self.num_layer + 1):
                 node_representation += h_list[layer]
+        elif self.JK == "max":
+            node_representation = torch.stack(h_list, dim=0)
+            node_representation = torch.max(node_representation, dim=0)[0]
 
         return node_representation
