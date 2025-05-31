@@ -3,7 +3,7 @@ import random
 import numpy as np
 import tarfile
 import os
-
+from torch_geometric.data import Data
 def set_seed(seed=777):
     seed = seed
     torch.manual_seed(seed)
