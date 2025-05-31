@@ -10,7 +10,7 @@ import logging
 from tqdm import tqdm 
 from sklearn.metrics import f1_score
 
-from src.loss import GCODLoss
+from src.losses import GCODLoss
 from src.models import GNN 
 from src.utils import RandomEdgeDrop, GaussianEdgeNoise
 # Set the random seed
